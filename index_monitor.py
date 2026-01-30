@@ -200,6 +200,20 @@ def extract_label_date(x):
     return None
 
 
+def build_trading_dates(start_dt, end_dt):
+    out = []
+    if start_dt is None or end_dt is None:
+        return out
+    if start_dt > end_dt:
+        return out
+    current = start_dt
+    while current <= end_dt:
+        if current.weekday() < 5:
+            out.append(current.isoformat())
+        current = current + timedelta(days=1)
+    return out
+
+
 def align_series_by_x(x1, y1, x2, y2, key_func=None, label_func=None):
     m2 = {}
     for x, v in zip(x2 or [], y2 or []):
@@ -434,17 +448,29 @@ def render_size_style_trend(ctx):
     else:
         window = 10
     diff_ret = rolling_sum_series(diff_step, window)
-
+ 
     threshold = 0.3
     start_key = start_dt.isoformat()
+    end_key = end_dt.isoformat()
     keep_idx = []
     for i, x in enumerate(x_data or []):
         d = extract_label_date(x)
-        if d is None or d >= start_key:
+        if d is None or (d >= start_key and d <= end_key):
             keep_idx.append(i)
     if keep_idx and len(keep_idx) != len(x_data or []):
         x_data = [x_data[i] for i in keep_idx]
         diff_ret = [diff_ret[i] for i in keep_idx]
+
+    if period == "日线":
+        expected_dates = build_trading_dates(start_dt, end_dt)
+        if expected_dates:
+            m = {}
+            for x, v in zip(x_data or [], diff_ret or []):
+                d = extract_label_date(x)
+                if d is not None and d not in m:
+                    m[d] = v
+            x_data = expected_dates
+            diff_ret = [m.get(d) for d in expected_dates]
 
     style = decide_size_style(diff_ret, threshold=threshold)
     last_diff = None
