@@ -294,7 +294,7 @@ def parse_indicator_day_series(data_list, value_key, start_dt=None):
         if x_val is None:
             if start_dt is not None:
                 try:
-                    x_val = (start_dt + timedelta(days=idx)).isoformat()
+                    x_val = (add_trading_days(start_dt, idx) or start_dt).isoformat()
                 except Exception:
                     x_val = idx
             else:
