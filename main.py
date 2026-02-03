@@ -118,7 +118,7 @@ def fetch_index_min_list(start_date_str, end_date_str, exponent_id, period, fiel
     }
     resp = requests.get(GET_INDEX_MIN_LIST_URL, headers=headers, params=params, timeout=10)
     data = resp.json()
-    if data.get("code") == 401:
+    if isinstance(data, dict) and data.get("code") == 401:
         refresh_token = get_refresh_token()
         if not refresh_token:
             raise RuntimeError("refresh-token失效且无法刷新")
@@ -129,9 +129,23 @@ def fetch_index_min_list(start_date_str, end_date_str, exponent_id, period, fiel
             GET_INDEX_MIN_LIST_URL, headers=headers, params=params, timeout=10
         )
         data = resp.json()
+    if isinstance(data, list):
+        return data
+    if not isinstance(data, dict):
+        return []
     if data.get("code") != 200:
         raise RuntimeError(data.get("msg") or data.get("message") or "getIndexMinList失败")
-    return data.get("data") or []
+    payload = data.get("data")
+    if isinstance(payload, list):
+        return payload
+    if isinstance(payload, dict):
+        for key in ("list", "rows", "items", "data"):
+            if isinstance(payload.get(key), list):
+                return payload.get(key)
+    for key in ("list", "rows", "items", "result"):
+        if isinstance(data.get(key), list):
+            return data.get(key)
+    return []
 
 
 @st.cache_data(ttl=300)
@@ -149,7 +163,7 @@ def fetch_index_day_list(start_date_str, end_date_str, exponent_ids_str, field_l
     }
     resp = requests.get(GET_INDEX_DAY_LIST_URL, headers=headers, params=params, timeout=25)
     data = resp.json()
-    if data.get("code") == 401:
+    if isinstance(data, dict) and data.get("code") == 401:
         refresh_token = get_refresh_token()
         if not refresh_token:
             raise RuntimeError("refresh-token失效且无法刷新")
@@ -160,9 +174,23 @@ def fetch_index_day_list(start_date_str, end_date_str, exponent_ids_str, field_l
             GET_INDEX_DAY_LIST_URL, headers=headers, params=params, timeout=25
         )
         data = resp.json()
+    if isinstance(data, list):
+        return data
+    if not isinstance(data, dict):
+        return []
     if data.get("code") != 200:
         raise RuntimeError(data.get("msg") or data.get("message") or "getIndexDayList失败")
-    return data.get("data") or []
+    payload = data.get("data")
+    if isinstance(payload, list):
+        return payload
+    if isinstance(payload, dict):
+        for key in ("list", "rows", "items", "data"):
+            if isinstance(payload.get(key), list):
+                return payload.get(key)
+    for key in ("list", "rows", "items", "result"):
+        if isinstance(data.get(key), list):
+            return data.get(key)
+    return []
 
 
 def apply_index_date_preset():
@@ -191,8 +219,10 @@ def get_trading_minutes_of_day(period_minutes):
         step = 1
     step = max(1, step)
 
-
-    morning_start = 9 * 60 + 30 + step
+    if step == 1:
+        morning_start = 9 * 60 + 30
+    else:
+        morning_start = 9 * 60 + 30 + step
     morning_end = 11 * 60 + 30 
     afternoon_start = 13 * 60 + step
     afternoon_end = 15 * 60
@@ -377,17 +407,20 @@ def parse_index_min_series(data_list, start_dt=None, period_minutes=None):
     return x_data, y_data
 
 
-def generate_random_series(length=30, base=3000, fluctuation=50):
+@st.cache_data(ttl=3600)
+def generate_random_series(length=30, base=3000, fluctuation=50, seed_text="default"):
+    rnd = random.Random(str(seed_text))
     x_data = list(range(length))
     value = base
     y_data = []
     for _ in x_data:
-        value += random.randint(-fluctuation, fluctuation)
+        value += rnd.randint(-fluctuation, fluctuation)
         y_data.append(value)
     return x_data, y_data
 
 
-def generate_period_series(period, start_dt=None, base=3000, fluctuation=50):
+@st.cache_data(ttl=3600)
+def generate_period_series(period, start_dt=None, base=3000, fluctuation=50, seed_text="default"):
     period_length = {
         "1分钟": 60,
         "5分钟": 48,
@@ -408,13 +441,18 @@ def generate_period_series(period, start_dt=None, base=3000, fluctuation=50):
         )
         x_data.append(ts.strftime("%Y-%m-%d\n%H:%M"))
 
-    _, y_data = generate_random_series(length=period_length, base=base, fluctuation=fluctuation)
+    _, y_data = generate_random_series(
+        length=period_length,
+        base=base,
+        fluctuation=fluctuation,
+        seed_text=f"{seed_text}|{period}|{start_dt}|{base}|{fluctuation}",
+    )
     return x_data, y_data
 
 
 def build_line_option(title, x_data=None, y_data=None, show_title=True):
     if x_data is None or y_data is None:
-        x_data, y_data = generate_random_series()
+        x_data, y_data = generate_random_series(seed_text=title)
     option = {
         "tooltip": {"trigger": "axis"},
         "xAxis": {

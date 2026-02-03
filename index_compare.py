@@ -86,9 +86,13 @@ def render_index_card(ctx, title, adjustable=False, height="320px"):
                 except Exception as e:
                     st.caption(f"{base_name} 数据获取失败，使用模拟数据：{e}")
             if not x_data or not y_data:
-                x_data, y_data = generate_period_series(period, start_dt=start_dt)
+                x_data, y_data = generate_period_series(
+                    period,
+                    start_dt=start_dt,
+                    seed_text=f"{base_name}|{period}|{start_dt.isoformat()}|{end_dt.isoformat()}",
+                )
     else:
-        x_data, y_data = generate_random_series()
+        x_data, y_data = generate_random_series(seed_text=title)
     option = build_line_option(title, x_data, y_data, show_title=False)
     st_echarts(option, height=height, key=option_key)
 
@@ -97,7 +101,7 @@ def render_card(ctx, title, height="320px"):
     generate_random_series = ctx["generate_random_series"]
     build_line_option = ctx["build_line_option"]
 
-    x_data, y_data = generate_random_series()
+    x_data, y_data = generate_random_series(seed_text=title)
     option = build_line_option(title, x_data, y_data, show_title=True)
     st_echarts(option, height=height, key=title)
 
@@ -178,4 +182,3 @@ def render_index_compare(ctx):
             with col:
                 with st.container(border=True):
                     render_card(ctx, title, height="320px")
-
