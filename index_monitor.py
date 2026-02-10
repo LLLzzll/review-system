@@ -1,4 +1,5 @@
 import random
+import pandas as pd
 
 from datetime import date, datetime, timedelta
 
@@ -1603,7 +1604,7 @@ def render_divergence_signal(ctx):
         st.markdown('</div>', unsafe_allow_html=True)
 
 
-def render_stock_distribution():
+def render_stock_distribution(ctx):
     with st.container(border=True):
         header = st.columns([3, 1.4, 1.4, 1.2])
         with header[0]:
@@ -1630,7 +1631,164 @@ def render_stock_distribution():
                 label_visibility="collapsed",
             )
 
-        categories, values, colors = generate_distribution_data(f"{metric}-{scope}-{bucket}")
+        categories = [
+            ">30%",
+            "30%",
+            "20%",
+            "10%",
+            "7%",
+            "4%",
+            "2%",
+            "0%",
+            "-2%",
+            "-4%",
+            "-7%",
+            "-10%",
+            "-20%",
+            "-30%",
+            "<-30%",
+        ]
+        colors = []
+        for name in categories:
+            if name in {">30%", "30%", "20%", "10%", "7%", "4%", "2%"}:
+                colors.append("#E94B3C")
+            elif name in {"-2%", "-4%", "-7%", "-10%", "-20%", "-30%", "<-30%"}:
+                colors.append("#2EBD85")
+            else:
+                colors.append("#999999")
+        values = [0 for _ in categories]
+
+        def decide_bucket(pct):
+            try:
+                v = float(pct)
+            except Exception:
+                return None
+            if v >= 30.0:
+                return ">30%"
+            if v >= 20.0:
+                return "30%"
+            if v >= 10.0:
+                return "20%"
+            if v >= 7.0:
+                return "10%"
+            if v >= 4.0:
+                return "7%"
+            if v >= 2.0:
+                return "4%"
+            if v > 0:
+                return "2%"
+            if v == 0:
+                return "0%"
+            if v > -2.0:
+                return "-2%"
+            if v >= -4.0:
+                return "-4%"
+            if v >= -7.0:
+                return "-7%"
+            if v >= -10.0:
+                return "-10%"
+            if v >= -20.0:
+                return "-20%"
+            if v >= -30.0:
+                return "-30%"
+            return "<-30%"
+
+        fetch_stock_list = ctx.get("fetch_stock_list_by_date_and_fields")
+        get_refresh_token = ctx.get("get_refresh_token")
+        has_token = bool(get_refresh_token())
+        deal_day = date.today()
+        if bucket == "昨日":
+            deal_day = deal_day - timedelta(days=1)
+        while deal_day.weekday() >= 5:
+            deal_day = deal_day - timedelta(days=1)
+        median_val = 0.0
+        halt_count_calc = 0
+        if metric == "涨跌幅" and has_token and fetch_stock_list:
+            try:
+                field_list = "stockCode,stockName,close,preClose,limitUpPrice,limitDownPrice,volume"
+                data_list = fetch_stock_list(deal_day.isoformat(), field_list, "1")
+                pct_list = []
+                limit_up_count = 0
+                limit_down_count = 0
+                seen_codes = set()
+                actual_date_text = None
+                bshare_filtered = 0
+                for item in data_list or []:
+                    code = get_first_value(item, ["stockCode", "code"])
+                    if code is None:
+                        continue
+                    code_text = str(code).strip()
+                    if not code_text or not code_text.isdigit():
+                        continue
+                    if code_text.startswith("200") or code_text.startswith("900"):
+                        bshare_filtered += 1
+                        continue
+                    if code_text in seen_codes:
+                        continue
+                    seen_codes.add(code_text)
+                    if actual_date_text is None:
+                        actual_date_text = get_first_value(item, ["dealDate", "tradeDate", "date"])
+                    close_val = get_first_value(item, ["close", "closePrice", "price"])
+                    pre_close_val = get_first_value(item, ["preClose", "pre_close", "lastClose", "prevClose"])
+                    lup = get_first_value(item, ["limitUpPrice"])
+                    ldn = get_first_value(item, ["limitDownPrice"])
+                    v = get_first_value(item, ["volume", "vol"])
+                    pct = None
+                    pct_raw = get_first_value(item, ["changePercent", "pct_chg", "change_percent"])
+                    try:
+                        if pct_raw is not None and str(pct_raw).strip() != "":
+                            pct = float(pct_raw)
+                    except Exception:
+                        pct = None
+                    try:
+                        c = float(close_val) if close_val is not None else None
+                        p = float(pre_close_val) if pre_close_val is not None else None
+                        if pct is None and c is not None and p is not None and p > 0:
+                            pct = round((c / p - 1.0) * 100.0, 4)
+                    except Exception:
+                        pct = None
+                    bucket_name = decide_bucket(pct)
+                    if bucket_name is not None:
+                        try:
+                            idx = categories.index(bucket_name)
+                            values[idx] += 1
+                        except Exception:
+                            pass
+                        try:
+                            pct_list.append(float(pct))
+                        except Exception:
+                            pass
+                    try:
+                        vv = float(v) if v is not None else None
+                    except Exception:
+                        vv = None
+                    if vv is not None and vv <= 0:
+                        halt_count_calc += 1
+                    try:
+                        c = float(close_val) if close_val is not None else None
+                        up = float(lup) if lup is not None else None
+                        dn = float(ldn) if ldn is not None else None
+                        if c is not None and up is not None and c >= up:
+                            limit_up_count += 1
+                        if c is not None and dn is not None and c <= dn:
+                            limit_down_count += 1
+                    except Exception:
+                        pass
+                if pct_list:
+                    s = sorted(pct_list)
+                    n = len(s)
+                    if n % 2 == 1:
+                        median_val = s[n // 2]
+                    else:
+                        median_val = (s[n // 2 - 1] + s[n // 2]) / 2.0
+            except Exception:
+                categories, values, colors = generate_distribution_data(f"{metric}-{scope}-{bucket}")
+                halt_count_calc = 0
+                median_val = 0.0
+        else:
+            categories, values, colors = generate_distribution_data(f"{metric}-{scope}-{bucket}")
+            halt_count_calc = 0
+            median_val = 0.0
 
         def bucket_value(name):
             t = str(name).strip()
@@ -1649,17 +1807,9 @@ def render_stock_distribution():
                     return 0.0
             return 0.0
 
-        pairs = [(bucket_value(c), v) for c, v in zip(categories, values)]
-        total_dist = sum(v for _, v in pairs) or 1
-        half = total_dist / 2.0
-        acc = 0
-        median_change = 0.0
-        for p, cnt in sorted(pairs, key=lambda x: x[0]):
-            acc += cnt
-            if acc >= half:
-                median_change = p
-                break
-        median_text = f"{median_change:+.2f}%"
+        if median_val is None:
+            median_val = 0.0
+        median_text = f"{float(median_val):+.2f}%"
 
         with header[0]:
             title_holder.markdown(
@@ -1671,20 +1821,25 @@ def render_stock_distribution():
 ''',
                 unsafe_allow_html=True,
             )
+            if locals().get("actual_date_text"):
+                st.markdown(
+                    f'<div style="font-size:12px;color:#6B7280;">数据日期：{str(locals().get("actual_date_text"))}（去重样本：{len(locals().get("seen_codes", set()))}，过滤B股：{locals().get("bshare_filtered",0)}）</div>',
+                    unsafe_allow_html=True,
+                )
 
         chart_col, side_col = st.columns([3, 1])
 
-        up_buckets = {"涨停", ">10%", "8%", "6%", "4%", "2%"}
-        down_buckets = {"跌停", "<-10%", "-8%", "-6%", "-4%", "-2%"}
+        up_buckets = {">30%", "30%", "20%", "10%", "7%", "4%", "2%"}
+        down_buckets = {"-2%", "-4%", "-7%", "-10%", "-20%", "-30%", "<-30%"}
         flat_bucket = "0%"
         up_count = sum(v for c, v in zip(categories, values) if c in up_buckets)
         down_count = sum(v for c, v in zip(categories, values) if c in down_buckets)
         flat_count = sum(v for c, v in zip(categories, values) if c == flat_bucket)
-        limit_up_count = sum(v for c, v in zip(categories, values) if c == "涨停")
-        limit_down_count = sum(v for c, v in zip(categories, values) if c == "跌停")
+        limit_up_count = locals().get("limit_up_count", 0)
+        limit_down_count = locals().get("limit_down_count", 0)
 
-        _, _, _, halt, _, _ = generate_stock_distribution_stats(f"{metric}|{scope}|{bucket}")
-        total_all = max(up_count + down_count + flat_count + halt, 1)
+        halt = halt_count_calc
+        total_all = max(up_count + down_count + flat_count + (halt or 0), 1)
         up_limit_ratio = round(limit_up_count * 100 / total_all, 2)
         down_limit_ratio = round(limit_down_count * 100 / total_all, 2)
         strength = round((up_count - down_count) * 100.0 / total_all, 2)
@@ -1702,14 +1857,10 @@ def render_stock_distribution():
 
         with chart_col:
             option = build_bar_option("涨跌分布", categories, values, colors, show_title=False)
-            st_echarts(option, height="320px", key="dist_chart")
+            st_echarts(option, height="300px", key="dist_chart")
 
-        strong_count = sum(v for c, v in zip(categories, values) if c in up_buckets and c != "2%") + sum(
-            v for c, v in zip(categories, values) if c in {"2%"}
-        )
-        weak_count = sum(v for c, v in zip(categories, values) if c in down_buckets and c != "-2%") + sum(
-            v for c, v in zip(categories, values) if c in {"-2%"}
-        )
+        strong_count = up_count
+        weak_count = down_count
         strong_ratio = round(strong_count * 100.0 / total_all, 2)
         weak_ratio = round(weak_count * 100.0 / total_all, 2)
         if strong_count > 0 and weak_count > 0:
@@ -1769,11 +1920,17 @@ def render_stock_distribution():
         color_map = {"上涨": "#E94B3C", "下跌": "#2EBD85", "平盘": "#6B7280", "停牌": "#6B7280"}
         cards_full = []
         for name, value in bottom_stats:
+            extra = ""
+            if name == "上涨":
+                extra = f'<div style="font-size:12px;color:#E94B3C;white-space:nowrap;">其中：涨停 {limit_up_count}家</div>'
+            elif name == "下跌":
+                extra = f'<div style="font-size:12px;color:#2EBD85;white-space:nowrap;">其中：跌停 {limit_down_count}家</div>'
             cards_full.append(
                 f'''
 <div style="background:#f5f5f5;border-radius:12px;padding:8px 12px;text-align:center;">
   <div style="font-size:12px;color:#666666;white-space:nowrap;">{name}</div>
   <div style="font-size:16px;font-weight:800;color:{color_map.get(name,"#111827")};white-space:nowrap;">{value}家</div>
+  {extra}
 </div>
 '''
             )
@@ -1795,4 +1952,211 @@ def render_index_monitor(ctx):
     with left:
         render_divergence_signal(ctx)
     with right:
-        render_stock_distribution()
+        render_stock_distribution(ctx)
+    st.write("")
+
+
+def render_volume_tun_panel(ctx):
+    fetch_index_day_list = ctx["fetch_index_day_list"]
+    parse_indicator_day_series = ctx["parse_indicator_day_series"]
+    index_min_map = ctx["INDEX_MIN_MAP"]
+    build_line_option = ctx["build_line_option"]
+
+    names = list(index_min_map.keys())
+    if "volume_tun_selected_index" not in st.session_state:
+        st.session_state["volume_tun_selected_index"] = names[0]
+    
+    current_selected = st.session_state.get("volume_tun_selected_index")
+    if current_selected not in names:
+        current_selected = names[0]
+        st.session_state["volume_tun_selected_index"] = current_selected
+
+    with st.container(border=True):
+        h1, h2, h3 = st.columns([3, 0.8, 1.2])
+        with h1:
+            st.markdown(
+                '<div style="text-align:left;font-size:16px;font-weight:800;color:#111827;display:flex;align-items:center;height:100%;">成交量与换手率监测</div>',
+                unsafe_allow_html=True,
+            )
+        with h2:
+            date_opt = st.selectbox(
+                "日期",
+                ["今日", "昨日"],
+                key="vol_tun_date_opt",
+                label_visibility="collapsed",
+            )
+        with h3:
+            selected = st.selectbox(
+                "选择指数",
+                names,
+                index=names.index(current_selected),
+                key="vol_tun_index_select",
+                label_visibility="collapsed",
+            )
+            st.session_state["volume_tun_selected_index"] = selected
+
+        today = date.today()
+        end_dt = today
+        while end_dt.weekday() >= 5:
+            end_dt = end_dt - timedelta(days=1)
+        
+        if date_opt == "昨日":
+            end_dt = end_dt - timedelta(days=1)
+            while end_dt.weekday() >= 5:
+                end_dt = end_dt - timedelta(days=1)
+        
+        start_dt = end_dt - timedelta(days=14)
+        # 监测表格只需要最近几天的数据（今日、昨日、前日），取7天缓冲以涵盖周末和节假日
+        start_dt_table = end_dt - timedelta(days=7)
+
+        st.divider()
+
+        ids = [index_min_map[n]["exponentId"] for n in names]
+        table_rows = []
+        t_label = "今日"
+        prev_label = "昨日"
+
+        for name, eid in zip(names, ids):
+            try:
+                all_list = fetch_index_day_list(
+                    start_dt_table.isoformat(),
+                    end_dt.isoformat(),
+                    str(eid),
+                    "volume,amount,turnoverRate,tun,turnoverRatio,turnover",
+                )
+                x_vol_tmp, y_vol_tmp = parse_indicator_day_series(all_list, ["volume", "vol"], start_dt=start_dt_table)
+                x_tun_tmp, y_tun_tmp = parse_indicator_day_series(
+                    all_list,
+                    ["tun", "turnoverRate", "turnover_rate", "turnover", "turnoverRatio", "turnover_ratio"],
+                    start_dt=start_dt_table,
+                )
+            except Exception:
+                x_vol_tmp, y_vol_tmp = [], []
+                x_tun_tmp, y_tun_tmp = [], []
+
+            valid_vol = [v for v in (y_vol_tmp or []) if v is not None]
+            last_vol = valid_vol[-1] if valid_vol else None
+            prev_vol = valid_vol[-2] if len(valid_vol) > 1 else None
+
+            vol_yoy = None
+            try:
+                lv = float(last_vol) if last_vol is not None else None
+                pv = float(prev_vol) if prev_vol is not None else None
+                if lv is not None and pv is not None and pv != 0:
+                    vol_yoy = (lv / pv - 1) * 100.0
+            except Exception:
+                vol_yoy = None
+
+            valid_tun = [v for v in (y_tun_tmp or []) if v is not None]
+            last_tun = valid_tun[-1] if valid_tun else None
+            prev_tun = valid_tun[-2] if len(valid_tun) > 1 else None
+
+            tun_yoy = None
+            try:
+                lt = float(last_tun) if last_tun is not None else None
+                pt = float(prev_tun) if prev_tun is not None else None
+                if lt is not None and pt is not None and pt != 0:
+                    tun_yoy = (lt / pt - 1) * 100.0
+            except Exception:
+                tun_yoy = None
+
+            def fmt_vol(v):
+                if v is None:
+                    return "--"
+                try:
+                    fv = float(v)
+                    return f"{fv:,.2f}"
+                except Exception:
+                    return "--"
+
+            table_rows.append(
+                {
+                    "指数": name,
+                    f"{prev_label}成交量(手)": fmt_vol(prev_vol),
+                    f"{t_label}成交量(手)": fmt_vol(last_vol),
+                    "成交量同比": f"{float(vol_yoy):+.2f}%" if vol_yoy is not None else "--",
+                    f"{prev_label}换手率": f"{float(prev_tun):.2f}%" if prev_tun is not None else "--",
+                    f"{t_label}换手率": f"{float(last_tun):.2f}%" if last_tun is not None else "--",
+                    "换手率同比": f"{float(tun_yoy):+.2f}%" if tun_yoy is not None else "--",
+                }
+            )
+
+        if table_rows:
+            df = pd.DataFrame(table_rows)
+            html = df.to_html(index=False, border=0, classes="custom-table")
+            st.markdown(
+                """
+                <style>
+                .custom-table {
+                    width: 100%;
+                    border-collapse: collapse;
+                    margin-bottom: 1rem;
+                }
+                .custom-table th, .custom-table td {
+                    text-align: center !important;
+                    padding: 8px;
+                    border: 1px solid #e5e7eb;
+                    font-size: 14px;
+                    color: #374151;
+                }
+                .custom-table th:nth-child(4), .custom-table td:nth-child(4) {
+                    border-right: 3px solid #d1d5db !important;
+                }
+                .custom-table th {
+                    background-color: #f9fafb;
+                    font-weight: 600;
+                }
+                </style>
+                """,
+                unsafe_allow_html=True,
+            )
+            st.markdown(html, unsafe_allow_html=True)
+        else:
+            st.info("暂无数据")
+
+        eid = index_min_map[selected]["exponentId"]
+        try:
+            all_list = fetch_index_day_list(
+                start_dt.isoformat(),
+                end_dt.isoformat(),
+                str(eid),
+                "volume,amount,turnoverRate,tun,turnoverRatio,turnover",
+            )
+            x_vol, y_vol = parse_indicator_day_series(all_list, ["volume", "vol"], start_dt=start_dt)
+            x_tun, y_tun = parse_indicator_day_series(
+                all_list,
+                ["tun", "turnoverRate", "turnover_rate", "turnover", "turnoverRatio", "turnover_ratio"],
+                start_dt=start_dt,
+            )
+        except Exception:
+            x_vol, y_vol = [], []
+            x_tun, y_tun = [], []
+        x_vol = [format_day_label(v, start_dt=start_dt) for v in (x_vol or [])]
+        x_tun = [format_day_label(v, start_dt=start_dt) for v in (x_tun or [])]
+        expected_dates = build_trading_dates(start_dt, end_dt)
+        if expected_dates:
+            m_vol = {}
+            for x, v in zip(x_vol or [], y_vol or []):
+                d = extract_label_date(x)
+                if d is not None and d not in m_vol:
+                    m_vol[d] = v
+            m_tun = {}
+            for x, v in zip(x_tun or [], y_tun or []):
+                d = extract_label_date(x)
+                if d is not None and d not in m_tun:
+                    m_tun[d] = v
+            x_vol = expected_dates
+            y_vol = [m_vol.get(d) for d in expected_dates]
+            x_tun = expected_dates
+            y_tun = [m_tun.get(d) for d in expected_dates]
+
+        vol_option = build_line_option(f"{selected} - 成交量", x_vol, y_vol, show_title=True)
+        tun_option = build_line_option(f"{selected} - 换手率(%)", x_tun, y_tun, show_title=True)
+
+        charts = st.columns(2)
+        with charts[0]:
+            with st.container(border=True):
+                st_echarts(vol_option, height="320px", key="vol_trend_chart")
+        with charts[1]:
+            with st.container(border=True):
+                st_echarts(tun_option, height="320px", key="tun_trend_chart")

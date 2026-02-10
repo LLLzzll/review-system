@@ -2,6 +2,7 @@ from datetime import date
 
 import streamlit as st
 from streamlit_echarts import st_echarts
+from index_monitor import render_volume_tun_panel
 
 
 def render_index_card(ctx, title, adjustable=False, height="320px"):
@@ -169,16 +170,5 @@ def render_index_compare(ctx):
                 with st.container(border=True):
                     render_index_card(ctx, title, adjustable="分时" in title)
 
-    st.write("")
-
-    bottom_container = st.container()
-    with bottom_container:
-        row3 = st.columns(2)
-        titles_row3 = [
-            "成交量、换手率监控表",
-            "成交金额与异动个股联动监控",
-        ]
-        for col, title in zip(row3, titles_row3):
-            with col:
-                with st.container(border=True):
-                    render_card(ctx, title, height="320px")
+        st.write("")
+        render_volume_tun_panel(ctx)

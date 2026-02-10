@@ -13,6 +13,7 @@ BASE_URL = os.getenv("DJ_BASE_URL", "http://dz.szdjct.com").strip()
 GET_ACCESS_TOKEN_URL = f"{BASE_URL}/djData/access/getAccessToken"
 GET_INDEX_MIN_LIST_URL = f"{BASE_URL}/djData/index/getIndexMinList"
 GET_INDEX_DAY_LIST_URL = f"{BASE_URL}/djData/index/getIndexDayList"
+GET_STOCK_LIST_URL = f"{BASE_URL}/djData/stock/getAllStockListByDateAndFields"
 
 INDEX_MIN_MAP = {
     "上证指数": {"code": "000001", "exponentId": 1},
@@ -147,6 +148,42 @@ def fetch_index_min_list(start_date_str, end_date_str, exponent_id, period, fiel
             return data.get(key)
     return []
 
+
+@st.cache_data(ttl=900)
+def fetch_stock_list_by_date_and_fields(deal_date_str, field_list, start_with=None):
+    access_token = get_access_token()
+    headers = {"Access-Token": access_token, "Accept": "application/json"}
+    params = {"dealDate": deal_date_str, "fieldList": field_list}
+    if start_with is not None:
+        params["startWith"] = start_with
+    resp = requests.get(GET_STOCK_LIST_URL, headers=headers, params=params, timeout=25)
+    data = resp.json()
+    if isinstance(data, dict) and data.get("code") == 401:
+        refresh_token = get_refresh_token()
+        if not refresh_token:
+            raise RuntimeError("refresh-token失效且无法刷新")
+        new_token = fetch_access_token(refresh_token)
+        st.session_state["dj_access_token"] = new_token
+        headers["Access-Token"] = new_token
+        resp = requests.get(GET_STOCK_LIST_URL, headers=headers, params=params, timeout=25)
+        data = resp.json()
+    if isinstance(data, list):
+        return data
+    if not isinstance(data, dict):
+        return []
+    if data.get("code") != 200:
+        raise RuntimeError(data.get("msg") or data.get("message") or "getAllStockListByDateAndFields失败")
+    payload = data.get("data")
+    if isinstance(payload, list):
+        return payload
+    if isinstance(payload, dict):
+        for key in ("list", "rows", "items", "data"):
+            if isinstance(payload.get(key), list):
+                return payload.get(key)
+    for key in ("list", "rows", "items", "result"):
+        if isinstance(data.get(key), list):
+            return data.get(key)
+    return []
 
 @st.cache_data(ttl=300)
 def fetch_index_day_list(start_date_str, end_date_str, exponent_ids_str, field_list):
@@ -589,6 +626,7 @@ def render_layout():
             "build_line_option": build_line_option,
             "fetch_index_day_list": fetch_index_day_list,
             "fetch_index_min_list": fetch_index_min_list,
+            "fetch_stock_list_by_date_and_fields": fetch_stock_list_by_date_and_fields,
             "generate_period_series": generate_period_series,
             "generate_random_series": generate_random_series,
             "get_refresh_token": get_refresh_token,
