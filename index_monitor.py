@@ -5,6 +5,7 @@ from datetime import date, datetime, timedelta
 
 import streamlit as st
 from streamlit_echarts import JsCode, st_echarts
+from decimal import Decimal, ROUND_DOWN, ROUND_HALF_UP
 
 
 def render_panel_title(title, subtitle=None):
@@ -1606,7 +1607,7 @@ def render_divergence_signal(ctx):
 
 def render_stock_distribution(ctx):
     with st.container(border=True):
-        header = st.columns([3, 1.4, 1.4, 1.2])
+        header = st.columns([3, 1.4, 1.4, 1.6])
         with header[0]:
             title_holder = st.empty()
         with header[1]:
@@ -1619,15 +1620,15 @@ def render_stock_distribution(ctx):
         with header[2]:
             scope = st.selectbox(
                 "范围",
-                ["全部A股", "代办1"],
+                ["全A股", "代办1"],
                 key="dist_scope",
                 label_visibility="collapsed",
             )
         with header[3]:
-            bucket = st.selectbox(
-                "分组",
-                ["今日", "昨日"],
-                key="dist_bucket",
+            deal_date_input = st.date_input(
+                "日期",
+                value=st.session_state.get("dist_date") or date.today(),
+                key="dist_date",
                 label_visibility="collapsed",
             )
 
@@ -1663,42 +1664,40 @@ def render_stock_distribution(ctx):
                 v = float(pct)
             except Exception:
                 return None
-            if v >= 30.0:
+            if v > 30.0:
                 return ">30%"
-            if v >= 20.0:
+            if 20.0 < v <= 30.0:
                 return "30%"
-            if v >= 10.0:
+            if 10.0 < v <= 20.0:
                 return "20%"
-            if v >= 7.0:
+            if 7.0 < v <= 10.0:
                 return "10%"
-            if v >= 4.0:
+            if 4.0 < v <= 7.0:
                 return "7%"
-            if v >= 2.0:
+            if 2.0 < v <= 4.0:
                 return "4%"
-            if v > 0:
+            if 0.0 < v <= 2.0:
                 return "2%"
-            if v == 0:
+            if v == 0.0:
                 return "0%"
-            if v > -2.0:
+            if -2.0 <= v < 0.0:
                 return "-2%"
-            if v >= -4.0:
+            if -4.0 <= v < -2.0:
                 return "-4%"
-            if v >= -7.0:
+            if -7.0 <= v < -4.0:
                 return "-7%"
-            if v >= -10.0:
+            if -10.0 <= v < -7.0:
                 return "-10%"
-            if v >= -20.0:
+            if -20.0 <= v < -10.0:
                 return "-20%"
-            if v >= -30.0:
+            if -30.0 <= v < -20.0:
                 return "-30%"
             return "<-30%"
 
         fetch_stock_list = ctx.get("fetch_stock_list_by_date_and_fields")
         get_refresh_token = ctx.get("get_refresh_token")
         has_token = bool(get_refresh_token())
-        deal_day = date.today()
-        if bucket == "昨日":
-            deal_day = deal_day - timedelta(days=1)
+        deal_day = deal_date_input or date.today()
         while deal_day.weekday() >= 5:
             deal_day = deal_day - timedelta(days=1)
         median_val = 0.0
@@ -1732,21 +1731,40 @@ def render_stock_distribution(ctx):
                     pre_close_val = get_first_value(item, ["preClose", "pre_close", "lastClose", "prevClose"])
                     lup = get_first_value(item, ["limitUpPrice"])
                     ldn = get_first_value(item, ["limitDownPrice"])
+                    name_val = get_first_value(item, ["stockName", "name"])
                     v = get_first_value(item, ["volume", "vol"])
-                    pct = None
-                    pct_raw = get_first_value(item, ["changePercent", "pct_chg", "change_percent"])
                     try:
-                        if pct_raw is not None and str(pct_raw).strip() != "":
-                            pct = float(pct_raw)
+                        vv = float(v) if v is not None and str(v).strip() != "" else None
                     except Exception:
-                        pct = None
+                        vv = None
+                    if vv is None or vv <= 0:
+                        halt_count_calc += 1
+                        continue
+                    pct = None
                     try:
                         c = float(close_val) if close_val is not None else None
                         p = float(pre_close_val) if pre_close_val is not None else None
                         if pct is None and c is not None and p is not None and p > 0:
-                            pct = round((c / p - 1.0) * 100.0, 4)
+                            raw = (c / p - 1.0) * 100.0
+                            pct = float(Decimal(str(raw)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
                     except Exception:
                         pct = None
+                    if pct is None:
+                        pct_raw = get_first_value(item, ["changePercent", "pct_chg", "change_percent"])
+                        try:
+                            if pct_raw is not None and str(pct_raw).strip() != "":
+                                pct = float(Decimal(str(pct_raw)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
+                        except Exception:
+                            pct = None
+                    try:
+                        if pct is not None:
+                            pct = float(pct)
+                            if pct > 30.0:
+                                pct = 30.0
+                            elif pct < -30.0:
+                                pct = -30.0
+                    except Exception:
+                        pass
                     bucket_name = decide_bucket(pct)
                     if bucket_name is not None:
                         try:
@@ -1759,18 +1777,43 @@ def render_stock_distribution(ctx):
                         except Exception:
                             pass
                     try:
-                        vv = float(v) if v is not None else None
-                    except Exception:
-                        vv = None
-                    if vv is not None and vv <= 0:
-                        halt_count_calc += 1
-                    try:
                         c = float(close_val) if close_val is not None else None
                         up = float(lup) if lup is not None else None
                         dn = float(ldn) if ldn is not None else None
-                        if c is not None and up is not None and c >= up:
+                        def r2(x):
+                            return float(Decimal(str(x)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
+                        def ge_2dp(a, b):
+                            try:
+                                a2 = r2(a)
+                                b2 = r2(b)
+                                return a2 >= b2
+                            except Exception:
+                                return False
+                        def le_2dp(a, b):
+                            try:
+                                a2 = r2(a)
+                                b2 = r2(b)
+                                return a2 <= b2
+                            except Exception:
+                                return False
+                        def eq_2dp(a, b):
+                            try:
+                                return r2(a) == r2(b)
+                            except Exception:
+                                return False
+                        def eq_raw(a, b):
+                            try:
+                                return Decimal(str(a)) == Decimal(str(b))
+                            except Exception:
+                                return False
+                        is_a_share = code_text.startswith(("000", "001", "002", "003", "300", "301", "600", "601", "603", "605", "688")) and not code_text.startswith(("200", "900"))
+                        name_text = str(name_val).strip() if name_val is not None else ""
+                        n_upper = name_text.upper()
+                        is_new = n_upper.startswith("N")
+                        is_star_st = n_upper.startswith("*ST")
+                        if is_a_share and (not is_new) and c is not None and up is not None and eq_2dp(c, up):
                             limit_up_count += 1
-                        if c is not None and dn is not None and c <= dn:
+                        if is_a_share and (not is_new) and c is not None and dn is not None and eq_2dp(c, dn):
                             limit_down_count += 1
                     except Exception:
                         pass
@@ -1782,11 +1825,11 @@ def render_stock_distribution(ctx):
                     else:
                         median_val = (s[n // 2 - 1] + s[n // 2]) / 2.0
             except Exception:
-                categories, values, colors = generate_distribution_data(f"{metric}-{scope}-{bucket}")
+                categories, values, colors = generate_distribution_data(f"{metric}-{scope}-{deal_day.isoformat()}")
                 halt_count_calc = 0
                 median_val = 0.0
         else:
-            categories, values, colors = generate_distribution_data(f"{metric}-{scope}-{bucket}")
+            categories, values, colors = generate_distribution_data(f"{metric}-{scope}-{deal_day.isoformat()}")
             halt_count_calc = 0
             median_val = 0.0
 
